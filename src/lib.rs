@@ -4,6 +4,7 @@ use swayipc::{Connection, Workspace};
 
 use clap::Parser;
 
+/// The command line interface for two tools.
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct WorkspaceCli {
@@ -61,6 +62,7 @@ pub fn output_if_exists(output: String, sway: &mut Connection) -> Option<String>
     None
 }
 
+/// Returns the path to the configuration file.
 pub fn get_config_path() -> PathBuf {
     [
         env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string()),
@@ -70,12 +72,14 @@ pub fn get_config_path() -> PathBuf {
     .collect()
 }
 
+/// Loads the configuration from the configuration file.
 pub fn load_config() -> Result<HashMap<String, Vec<i32>>> {
     let config_path = get_config_path();
     let json = fs::read_to_string(config_path).unwrap_or_default();
     serde_json::from_str(&json)
 }
 
+/// Stores the configuration in the configuration file.
 pub fn save_config(config: &HashMap<String, Vec<i32>>) -> bool {
     let config_path = get_config_path();
     if let Ok(json) = serde_json::to_string(&config) {
@@ -84,20 +88,22 @@ pub fn save_config(config: &HashMap<String, Vec<i32>>) -> bool {
     false
 }
 
+/// Create a configuration from a list of mapping strings.
 pub fn make_config(mappings: Vec<String>, sway: &mut Connection) -> HashMap<String, Vec<i32>> {
-    let mut workspaces = HashMap::new();
+    let mut config = HashMap::new();
 
     mappings
         .iter()
-        .flat_map(|mapping| add_mapping(mapping, &mut workspaces, sway))
+        .flat_map(|mapping| add_mapping(mapping, &mut config, sway))
         .for_each(drop);
 
-    workspaces
+    config
 }
 
+/// Add one mapping from the provided `mapping` string to the `config` set.
 fn add_mapping(
     mapping: &str,
-    workspaces: &mut HashMap<String, Vec<i32>>,
+    config: &mut HashMap<String, Vec<i32>>,
     sway: &mut Connection,
 ) -> Option<()> {
     let (output_str, workspace_str) = mapping.split_at(mapping.rfind(':')?);
@@ -106,7 +112,7 @@ fn add_mapping(
         let (left_str, right_str) = workspace_str[1..].split_at(index);
         let left = left_str.parse().ok()?;
         let right = right_str[1..].parse().ok()?;
-        workspaces.insert(
+        config.insert(
             output,
             (if left <= right {
                 left..=right
@@ -117,11 +123,12 @@ fn add_mapping(
         );
     } else {
         let number = workspace_str[1..].parse().ok()?;
-        workspaces.insert(output, vec![number]);
+        config.insert(output, vec![number]);
     };
     Some(())
 }
 
+/// Returns whether a workspace with the given number exists.
 pub fn workspace_exists(workspace_num: i32, sway: &mut Connection) -> bool {
     sway.get_workspaces()
         .unwrap_or_default()
@@ -129,6 +136,7 @@ pub fn workspace_exists(workspace_num: i32, sway: &mut Connection) -> bool {
         .any(|workspace| workspace.num == workspace_num)
 }
 
+/// Get the output on which the workspace with the given number should be shown.
 pub fn get_output_for_workspace(workspace_num: i32) -> Option<String> {
     let config = load_config().ok()?;
 
@@ -141,6 +149,7 @@ pub fn get_output_for_workspace(workspace_num: i32) -> Option<String> {
     None
 }
 
+/// Return the currently focused workspace.
 pub fn get_focused_workspace(sway: &mut Connection) -> Option<Workspace> {
     sway.get_workspaces()
         .unwrap_or_default()
@@ -148,6 +157,7 @@ pub fn get_focused_workspace(sway: &mut Connection) -> Option<Workspace> {
         .find(|workspace| workspace.focused)
 }
 
+/// Return the workspace currently shown on the given `output`.
 pub fn get_visible_workspace_for_output(
     output: &String,
     sway: &mut Connection,
