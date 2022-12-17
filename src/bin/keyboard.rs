@@ -1,14 +1,18 @@
+use clap::{ArgGroup, Parser, ValueHint};
+use itertools::Itertools;
+use serde::Serialize;
+use serde_json::Value;
+use std::fmt::Write;
 use std::{
     collections::HashMap,
     ffi::CStr,
     fs::File,
     io::{BufRead, BufReader},
     os::raw::c_char,
+    process::exit,
 };
-
-use clap::{ArgGroup, Parser, ValueHint};
-use itertools::Itertools;
 use swayipc::{Connection, Event, EventType, Input};
+use tinytemplate::{error::Error, TinyTemplate};
 use xkbregistry::{
     rxkb_context_new, rxkb_context_parse_default_ruleset, rxkb_context_unref, rxkb_layout_first,
     rxkb_layout_get_brief, rxkb_layout_get_description, rxkb_layout_get_name,
@@ -41,7 +45,7 @@ struct Cli {
     exclude_file: Option<String>,
 
     /// The output string formatting
-    #[arg(short, long, default_value = "{}")]
+    #[arg(short, long, default_value = "{result}")]
     format: String,
 
     /// The output string formatting for a single keyboard
@@ -53,7 +57,7 @@ struct Cli {
     format_separator: String,
 
     /// The tooltip string formatting for a single keyboard
-    #[arg(short, long, default_value = "<b>Keyboards</b>\n{}")]
+    #[arg(short, long, default_value = "<b>Keyboards</b>\n{result}")]
     tooltip: String,
 
     /// The tooltip string formatting for a single keyboard
@@ -65,6 +69,29 @@ struct Cli {
     tooltip_separator: String,
 }
 
+static JSON_OUTPUT: &'static str = "\\{\"text\":\"{text}\",\"tooltip\":\"{tooltip}\"}";
+
+pub fn format_json_escaped(value: &Value, output: &mut String) -> Result<(), Error> {
+    match value {
+        Value::Null => Ok(()),
+        Value::Bool(b) => {
+            write!(output, "{}", b)?;
+            Ok(())
+        }
+        Value::Number(n) => {
+            write!(output, "{}", n)?;
+            Ok(())
+        }
+        Value::String(s) => {
+            output.push_str(&s.replace("\"", "\\\"").replace("\n", "\\n"));
+            Ok(())
+        }
+        _ => Err(Error::GenericError {
+            msg: "Expected a printable value but found array or object.".to_string(),
+        }),
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
     let mut sway = Connection::new().expect("Cannot connect to sway ipc socket.");
@@ -74,14 +101,36 @@ fn main() {
     // Load all layouts for all keyboards present and matching
     let mut layouts = initialize_layouts(&matches, include, &mut sway);
 
+    let mut templater = TinyTemplate::new();
+    templater.set_default_formatter(&format_json_escaped);
+
+    if let Err(err) = templater.add_template("json", &JSON_OUTPUT) {
+        println!("Builtin json template is invalid template: {}", err);
+        exit(1);
+    }
+
+    if let Err(err) = templater.add_template("format", &cli.format) {
+        println!("`format` string is invalid template: {}", err);
+        exit(1);
+    }
+    if let Err(err) = templater.add_template("format_single", &cli.format_single) {
+        println!("`format_single` string is invalid template: {}", err);
+        exit(1);
+    }
+    if let Err(err) = templater.add_template("tooltip", &cli.tooltip) {
+        println!("`tooltip` string is invalid template: {}", err);
+        exit(1);
+    }
+    if let Err(err) = templater.add_template("tooltip_single", &cli.tooltip_single) {
+        println!("`tooltip_single` string is invalid template: {}", err);
+        exit(1);
+    }
+
     // Before entering the event loop, print out the keyboard situation
     output_keyboards(
         &layouts,
-        &cli.format,
-        &cli.format_single,
+        &templater,
         &cli.format_separator,
-        &cli.tooltip,
-        &cli.tooltip_single,
         &cli.tooltip_separator,
     );
 
@@ -128,11 +177,8 @@ fn main() {
             // Print out the (new) keyboard situation
             output_keyboards(
                 &layouts,
-                &cli.format,
-                &cli.format_single,
+                &templater,
                 &cli.format_separator,
-                &cli.tooltip,
-                &cli.tooltip_single,
                 &cli.tooltip_separator,
             );
         }
@@ -142,114 +188,58 @@ fn main() {
 /// Outputs a json representation of the current keyboard situation.
 fn output_keyboards(
     layouts: &HashMap<String, (String, Layout)>,
-    format: &String,
-    format_single: &String,
+    templater: &TinyTemplate,
     format_separator: &String,
-    tooltip: &String,
-    tooltip_single: &String,
     tooltip_separator: &String,
 ) {
-    print!("{{\"text\":\"");
-    let mut formats = format.splitn(2, "{}");
-    print!(
+    let single_contexts: Vec<SingleContext> = layouts
+        .iter()
+        .sorted_by_key(|x| x.0)
+        .map(|x| SingleContext {
+            keyboard: x.1 .0.to_owned(),
+            description: x.1 .1.description.to_owned(),
+            name: x.1 .1.name.to_owned(),
+            variant: x.1 .1.variant.to_owned().unwrap_or_default(),
+            brief: x.1 .1.brief.to_owned().unwrap_or_default(),
+            flag: x.1 .1.flag(),
+        })
+        .collect();
+
+    let format_singles = single_contexts
+        .iter()
+        .map(|c| templater.render("format_single", c))
+        .filter_map(|s| s.ok())
+        .join(&format_separator);
+
+    let tooltip_singles = single_contexts
+        .iter()
+        .map(|c| templater.render("tooltip_single", c))
+        .filter_map(|s| s.ok())
+        .join(&tooltip_separator);
+
+    let text = templater
+        .render(
+            "format",
+            &ResultContext {
+                result: format_singles,
+            },
+        )
+        .unwrap();
+    let tooltip = templater
+        .render(
+            "tooltip",
+            &ResultContext {
+                result: tooltip_singles,
+            },
+        )
+        .unwrap();
+
+    println!(
         "{}",
-        formats
-            .nth(0)
-            .unwrap_or_default()
-            .replace("\n", "\\n")
-            .replace("\"", "\\\"")
+        templater
+            .render("json", &GlobalContext { text, tooltip })
+            .unwrap()
     );
-    for (i, layout) in layouts.keys().sorted().enumerate() {
-        if i > 0 {
-            print!(
-                "{}",
-                format_separator.replace("\n", "\\n").replace("\"", "\\\"")
-            );
-        }
-        print!(
-            "{}",
-            format_single
-                .replace("{keyboard}", &layouts[layout].0)
-                .replace("{description}", &layouts[layout].1.description)
-                .replace("{name}", &layouts[layout].1.name)
-                .replace(
-                    "{variant}",
-                    match &layouts[layout].1.variant {
-                        Some(string) => &string,
-                        None => &"",
-                    }
-                )
-                .replace(
-                    "{brief}",
-                    match &layouts[layout].1.brief {
-                        Some(string) => &string,
-                        None => &"",
-                    }
-                )
-                .replace("{flag}", &layouts[layout].1.flag())
-                .replace("\n", "\\n")
-                .replace("\"", "\\\"")
-        );
-    }
-    print!(
-        "{}",
-        formats
-            .next()
-            .unwrap_or_default()
-            .replace("\n", "\\n")
-            .replace("\"", "\\\"")
-    );
-    print!("\",\"tooltip\":\"");
-    let mut tooltips = tooltip.splitn(2, "{}");
-    print!(
-        "{}",
-        tooltips
-            .nth(0)
-            .unwrap_or_default()
-            .replace("\n", "\\n")
-            .replace("\"", "\\\"")
-    );
-    for (i, layout) in layouts.keys().sorted().enumerate() {
-        if i > 0 {
-            print!(
-                "{}",
-                tooltip_separator.replace("\n", "\\n").replace("\"", "\\\"")
-            );
-        }
-        print!(
-            "{}",
-            tooltip_single
-                .replace("{keyboard}", &layouts[layout].0)
-                .replace("{description}", &layouts[layout].1.description)
-                .replace("{name}", &layouts[layout].1.name)
-                .replace(
-                    "{variant}",
-                    match &layouts[layout].1.variant {
-                        Some(string) => &string,
-                        None => &"",
-                    }
-                )
-                .replace(
-                    "{brief}",
-                    match &layouts[layout].1.brief {
-                        Some(string) => &string,
-                        None => &"",
-                    }
-                )
-                .replace("{flag}", &layouts[layout].1.flag())
-                .replace("\n", "\\n")
-                .replace("\"", "\\\"")
-        );
-    }
-    print!(
-        "{}",
-        tooltips
-            .next()
-            .unwrap_or_default()
-            .replace("\n", "\\n")
-            .replace("\"", "\\\"")
-    );
-    println!("\"}}");
 }
 
 /// Return a list of elements to be included/excluded and a flag telling us to include or exclude.
@@ -424,4 +414,25 @@ fn get_layout_for_name(layout_name: &String) -> Option<Layout> {
     }
     unsafe { rxkb_context_unref(ctx) };
     None
+}
+
+#[derive(Serialize)]
+struct SingleContext {
+    keyboard: String,
+    description: String,
+    name: String,
+    variant: String,
+    brief: String,
+    flag: String,
+}
+
+#[derive(Serialize)]
+struct GlobalContext {
+    text: String,
+    tooltip: String,
+}
+
+#[derive(Serialize)]
+struct ResultContext {
+    result: String,
 }
