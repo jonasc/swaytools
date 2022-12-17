@@ -69,7 +69,7 @@ struct Cli {
     tooltip_separator: String,
 }
 
-static JSON_OUTPUT: &'static str = "\\{\"text\":\"{text}\",\"tooltip\":\"{tooltip}\"}";
+static JSON_OUTPUT: &str = "\\{\"text\":\"{text}\",\"tooltip\":\"{tooltip}\"}";
 
 pub fn format_json_escaped(value: &Value, output: &mut String) -> Result<(), Error> {
     match value {
@@ -83,7 +83,7 @@ pub fn format_json_escaped(value: &Value, output: &mut String) -> Result<(), Err
             Ok(())
         }
         Value::String(s) => {
-            output.push_str(&s.replace("\"", "\\\"").replace("\n", "\\n"));
+            output.push_str(&s.replace('"', "\\\"").replace('\n', "\\n"));
             Ok(())
         }
         _ => Err(Error::GenericError {
@@ -104,7 +104,7 @@ fn main() {
     let mut templater = TinyTemplate::new();
     templater.set_default_formatter(&format_json_escaped);
 
-    if let Err(err) = templater.add_template("json", &JSON_OUTPUT) {
+    if let Err(err) = templater.add_template("json", JSON_OUTPUT) {
         println!("Builtin json template is invalid template: {}", err);
         exit(1);
     }
@@ -137,7 +137,7 @@ fn main() {
     // Subscribe to all input events
     let event_types = [EventType::Input];
     let mut events = sway
-        .subscribe(&event_types)
+        .subscribe(event_types)
         .expect("Cannot subscribe to sway events.");
 
     loop {
@@ -155,7 +155,6 @@ fn main() {
                 // If a keyboard was removed, remove the corresponding entry from our mapping
                 swayipc::InputChange::Removed => {
                     layouts.remove(&ev.input.identifier);
-                    ()
                 }
                 // If a keyboard was added or a layout changed, store the (new) layout in our mapping
                 swayipc::InputChange::Added
@@ -165,9 +164,6 @@ fn main() {
                         get_layout_for_name(&ev.input.xkb_active_layout_name.unwrap_or_default())
                     {
                         layouts.insert(ev.input.identifier, (ev.input.name, layout));
-                        ()
-                    } else {
-                        ()
                     }
                 }
                 // Ignore all other events
@@ -189,8 +185,8 @@ fn main() {
 fn output_keyboards(
     layouts: &HashMap<String, (String, Layout)>,
     templater: &TinyTemplate,
-    format_separator: &String,
-    tooltip_separator: &String,
+    format_separator: &str,
+    tooltip_separator: &str,
 ) {
     let single_contexts: Vec<SingleContext> = layouts
         .iter()
@@ -209,13 +205,13 @@ fn output_keyboards(
         .iter()
         .map(|c| templater.render("format_single", c))
         .filter_map(|s| s.ok())
-        .join(&format_separator);
+        .join(format_separator);
 
     let tooltip_singles = single_contexts
         .iter()
         .map(|c| templater.render("tooltip_single", c))
         .filter_map(|s| s.ok())
-        .join(&tooltip_separator);
+        .join(tooltip_separator);
 
     let text = templater
         .render(
@@ -258,13 +254,11 @@ fn build_clude_list(list: &Vec<String>, opt_file_name: &Option<String>) -> Vec<S
     let mut result = list.to_owned();
     if let Some(file_name) = opt_file_name {
         if let Ok(file) = File::open(file_name) {
-            for line_result in BufReader::new(file).lines() {
-                if let Ok(line) = line_result {
-                    if line.len() == 0 || line.starts_with('#') {
-                        continue;
-                    }
-                    result.push(line);
+            for line in BufReader::new(file).lines().flatten() {
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
                 }
+                result.push(line);
             }
         }
     }
@@ -315,7 +309,7 @@ impl Layout {
 }
 
 fn initialize_layouts(
-    matches: &Vec<String>,
+    matches: &[String],
     include: bool,
     sway: &mut Connection,
 ) -> HashMap<String, (String, Layout)> {
@@ -402,10 +396,10 @@ fn get_layout_for_name(layout_name: &String) -> Option<Layout> {
                 let brief = c_char_ptr_to_string(unsafe { rxkb_layout_get_brief(layout) });
                 unsafe { rxkb_context_unref(ctx) };
                 return Some(Layout {
-                    description: description.to_owned(),
-                    name: name,
-                    variant: variant,
-                    brief: brief,
+                    description,
+                    name,
+                    variant,
+                    brief,
                 });
             }
         }
