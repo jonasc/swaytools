@@ -75,11 +75,11 @@ pub fn format_json_escaped(value: &Value, output: &mut String) -> Result<(), Err
     match value {
         Value::Null => Ok(()),
         Value::Bool(b) => {
-            write!(output, "{}", b)?;
+            write!(output, "{b}")?;
             Ok(())
         }
         Value::Number(n) => {
-            write!(output, "{}", n)?;
+            write!(output, "{n}")?;
             Ok(())
         }
         Value::String(s) => {
@@ -105,24 +105,24 @@ fn main() {
     templater.set_default_formatter(&format_json_escaped);
 
     if let Err(err) = templater.add_template("json", JSON_OUTPUT) {
-        println!("Builtin json template is invalid template: {}", err);
+        println!("Builtin json template is invalid template: {err}");
         exit(1);
     }
 
     if let Err(err) = templater.add_template("format", &cli.format) {
-        println!("`format` string is invalid template: {}", err);
+        println!("`format` string is invalid template: {err}");
         exit(1);
     }
     if let Err(err) = templater.add_template("format_single", &cli.format_single) {
-        println!("`format_single` string is invalid template: {}", err);
+        println!("`format_single` string is invalid template: {err}");
         exit(1);
     }
     if let Err(err) = templater.add_template("tooltip", &cli.tooltip) {
-        println!("`tooltip` string is invalid template: {}", err);
+        println!("`tooltip` string is invalid template: {err}");
         exit(1);
     }
     if let Err(err) = templater.add_template("tooltip_single", &cli.tooltip_single) {
-        println!("`tooltip_single` string is invalid template: {}", err);
+        println!("`tooltip_single` string is invalid template: {err}");
         exit(1);
     }
 

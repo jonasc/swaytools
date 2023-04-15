@@ -71,16 +71,13 @@ fn move_workspaces(mappings: &HashMap<String, Vec<i32>>, sway: &mut Connection) 
             .get(output)
             .and_then(|workspaces| workspaces.first())
             .map(|num| {
-                sway.run_command(&format!(
-                    "workspace --no-auto-back-and-forth number {}, move workspace to output '{}'",
-                    num, output
-                ))
+                sway.run_command(&format!("workspace --no-auto-back-and-forth number {num}, move workspace to output '{output}'"))
             });
     }
 
     // Focus the previously focused workspace.
     if let Some(ws) = focused_ws {
-        sway.run_command(format!("workspace --no-auto-back-and-forth number {}", ws))
+        sway.run_command(format!("workspace --no-auto-back-and-forth number {ws}"))
             .expect("Cannot switch back to focused workspace.");
     }
 }
